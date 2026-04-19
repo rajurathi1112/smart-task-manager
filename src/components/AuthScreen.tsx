@@ -8,6 +8,10 @@ export const AuthScreen = () => {
   const [loading, setLoading] = useState(false);
 
   async function signInWithEmail() {
+    if (!email || !password) {
+      Alert.alert('Validation Error', 'Please enter both email and password.');
+      return;
+    }
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({
       email: email,
@@ -19,6 +23,10 @@ export const AuthScreen = () => {
   }
 
   async function signUpWithEmail() {
+    if (!email || !password) {
+      Alert.alert('Validation Error', 'Please enter both email and password.');
+      return;
+    }
     setLoading(true);
     const {
       data: { session },
@@ -45,7 +53,7 @@ export const AuthScreen = () => {
             style={styles.input}
             onChangeText={(text) => setEmail(text)}
             value={email}
-            placeholder="you@example.com"
+            placeholder=""
             autoCapitalize={'none'}
             keyboardType="email-address"
           />
@@ -58,7 +66,7 @@ export const AuthScreen = () => {
             onChangeText={(text) => setPassword(text)}
             value={password}
             secureTextEntry={true}
-            placeholder="••••••••"
+            placeholder=""
             autoCapitalize={'none'}
           />
         </View>
@@ -67,11 +75,19 @@ export const AuthScreen = () => {
           <ActivityIndicator size="large" color="#6366f1" style={{ marginTop: 20 }} />
         ) : (
           <>
-            <TouchableOpacity style={styles.primaryButton} onPress={signInWithEmail}>
+            <TouchableOpacity 
+              style={[styles.primaryButton, (!email || !password) && styles.disabledButton]} 
+              onPress={signInWithEmail}
+              disabled={!email || !password}
+            >
               <Text style={styles.primaryButtonText}>Sign In</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.secondaryButton} onPress={signUpWithEmail}>
+            <TouchableOpacity 
+              style={[styles.secondaryButton, (!email || !password) && styles.disabledButtonSecondary]} 
+              onPress={signUpWithEmail}
+              disabled={!email || !password}
+            >
               <Text style={styles.secondaryButtonText}>Create Account</Text>
             </TouchableOpacity>
           </>
@@ -136,6 +152,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
+  disabledButton: {
+    backgroundColor: '#a5a6f6',
+  },
   primaryButtonText: {
     color: '#ffffff',
     fontSize: 16,
@@ -146,6 +165,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 8,
+  },
+  disabledButtonSecondary: {
+    opacity: 0.5,
   },
   secondaryButtonText: {
     color: '#6366f1',
