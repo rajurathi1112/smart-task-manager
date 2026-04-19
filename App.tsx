@@ -1,18 +1,24 @@
+import 'react-native-url-polyfill/auto';
 import { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, FlatList, Alert, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { Session } from '@supabase/supabase-js';
 
-import { loadTasksFromStorage, saveTasksToStorage } from './src/utils/storage';
+import { supabase } from './src/utils/supabase';
+import { loadTasksFromStorage, insertTask, updateTask, deleteTask } from './src/utils/storage';
 import { TaskCard } from './src/components/TaskCard';
 import { TaskFormModal } from './src/components/TaskFormModal';
+import { AuthScreen } from './src/components/AuthScreen';
 
 /**
  * Main Application Component for Smart Task Manager.
- * Handles the state of the task list and orchestrates child components.
+ * Handles the state of the task list, authentication, and orchestrates child components.
  */
 export default function App() {
-  const [tasks, setTasks] = useState([]);
+  const [session, setSession] = useState<Session | null>(null);
+  
+  const [tasks, setTasks] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('pending'); // 'pending' | 'completed'
   const [expandedId, setExpandedId] = useState(null);
 
@@ -28,20 +34,30 @@ export default function App() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  /**
-   * Fetch tasks from persistent local storage on initial mount.
-   */
   useEffect(() => {
-    loadTasksFromStorage().then(setTasks);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
   }, []);
 
-  /**
-   * Helper to save tasks to both local React state and persistent storage.
-   * @param {Array} newTasks - The new task array to save.
-   */
-  const saveTasks = (newTasks) => {
-    setTasks(newTasks);
-    saveTasksToStorage(newTasks);
+  useEffect(() => {
+    if (session) {
+      loadTasksFromStorage().then(setTasks);
+    } else {
+      setTasks([]);
+    }
+  }, [session]);
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
+  const handleSignOut = () => {
+    supabase.auth.signOut();
   };
 
   /**
@@ -59,9 +75,8 @@ export default function App() {
 
   /**
    * Populates the form with existing task data and opens the modal to edit.
-   * @param {Object} task - The task to update.
    */
-  const openUpdateModal = (task) => {
+  const openUpdateModal = (task: any) => {
     let etaDate = new Date();
     if (task.eta) {
       const parsed = new Date(task.eta);
@@ -77,75 +92,90 @@ export default function App() {
   /**
    * Validates and saves the form data as either a new or updated task.
    */
-  const handleSaveTask = () => {
+  const handleSaveTask = async () => {
     if (!formData.title.trim()) {
       alert('Title is required');
       return;
     }
 
     const etaIso = formData.eta ? formData.eta.toISOString() : null;
+    const taskData = {
+      title: formData.title,
+      description: formData.description,
+      eta: etaIso,
+      completed: false,
+    };
 
     if (isUpdating) {
+      // Optimistic update
       const newTasks = tasks.map(t => 
-        t.id === currentId ? { ...t, title: formData.title, description: formData.description, eta: etaIso } : t
+        t.id === currentId ? { ...t, ...taskData } : t
       );
-      saveTasks(newTasks);
+      setTasks(newTasks);
+      
+      await updateTask({ id: currentId, ...taskData });
     } else {
-      const newTask = {
-        id: Date.now().toString(),
-        title: formData.title,
-        description: formData.description,
-        eta: etaIso,
-        completed: false,
+      // Create new
+      const tempTask = {
+        id: Date.now().toString(), // temporary ID
+        ...taskData,
         createdAt: new Date().toISOString()
       };
-      saveTasks([...tasks, newTask]);
+      
+      setTasks([...tasks, tempTask]);
+      const dbTask = await insertTask(taskData);
+      
+      // Update with actual DB ID
+      if (dbTask) {
+        setTasks(currentTasks => currentTasks.map(t => t.id === tempTask.id ? dbTask : t));
+      }
     }
     setModalVisible(false);
   };
 
   /**
    * Prompts user for confirmation and deletes the task if confirmed.
-   * @param {string} id - The ID of the task to remove.
    */
-  const removeTask = (id) => {
+  const handleRemoveTask = (id: string) => {
+    const execDelete = () => {
+      setTasks(tasks.filter(t => t.id !== id));
+      deleteTask(id);
+    };
+
     if (Platform.OS === 'web') {
-      // Browser-native confirmation prompt
       if (window.confirm('Are you sure you want to delete this task?')) {
-        saveTasks(tasks.filter(t => t.id !== id));
+        execDelete();
       }
     } else {
-      // Mobile-native confirmation alert
-      Alert.alert(
-        'Delete Task',
-        'Are you sure you want to delete this task?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Delete', style: 'destructive', onPress: () => saveTasks(tasks.filter(t => t.id !== id)) }
-        ]
-      );
+      Alert.alert('Delete Task', 'Are you sure you want to delete this task?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: execDelete }
+      ]);
     }
   };
 
   /**
    * Toggles the completion status of a specific task.
-   * @param {string} id - The ID of the task to toggle.
    */
-  const toggleStatus = (id) => {
+  const toggleStatus = (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    const newCompleted = !task.completed;
     const newTasks = tasks.map(t => 
-      t.id === id ? { ...t, completed: !t.completed } : t
+      t.id === id ? { ...t, completed: newCompleted } : t
     );
-    saveTasks(newTasks);
+    setTasks(newTasks);
+    
+    updateTask({ ...task, completed: newCompleted });
   };
 
-  // Filter tasks based on the currently active tab (Pending vs Completed)
-  // Sort tasks so the ones with closest ETAs are at the top.
   const filteredTasks = tasks
     .filter(t => activeTab === 'pending' ? !t.completed : t.completed)
     .sort((a, b) => {
       if (!a.eta) return 1;
       if (!b.eta) return -1;
-      return new Date(a.eta) - new Date(b.eta);
+      return new Date(a.eta).getTime() - new Date(b.eta).getTime();
     });
 
   return (
@@ -158,6 +188,9 @@ export default function App() {
           <Text style={styles.headerTitle}>Smart Tasks</Text>
           <Text style={styles.headerSubtitle}>Manage your day effectively</Text>
         </View>
+        <TouchableOpacity onPress={handleSignOut} style={styles.signOutBtn}>
+          <Ionicons name="log-out-outline" size={24} color="#ef4444" />
+        </TouchableOpacity>
       </View>
 
       {/* Navigation Tabs */}
@@ -185,7 +218,7 @@ export default function App() {
       {/* Task List */}
       <FlatList
         data={filteredTasks}
-        keyExtractor={item => item.id}
+        keyExtractor={item => item.id.toString()}
         renderItem={({ item }) => (
           <TaskCard 
             item={item} 
@@ -193,7 +226,7 @@ export default function App() {
             onToggleExpand={() => setExpandedId(expandedId === item.id ? null : item.id)}
             onToggleStatus={() => toggleStatus(item.id)}
             onEdit={() => openUpdateModal(item)}
-            onDelete={() => removeTask(item.id)}
+            onDelete={() => handleRemoveTask(item.id)}
           />
         )}
         contentContainerStyle={styles.listContent}
@@ -253,6 +286,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#64748b',
     marginTop: 4,
+  },
+  signOutBtn: {
+    padding: 8,
+    backgroundColor: '#fef2f2',
+    borderRadius: 12,
   },
   tabContainerWrapper: {
     backgroundColor: '#ffffff',

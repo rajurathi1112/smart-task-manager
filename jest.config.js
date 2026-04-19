@@ -6,8 +6,5 @@ module.exports = {
   testPathIgnorePatterns: [
     "/node_modules/",
     "/e2e/"
-  ],
-  moduleNameMapper: {
-    "^@expo/vector-icons$": "<rootDir>/__mocks__/@expo/vector-icons.js"
-  }
+  ]
 };
